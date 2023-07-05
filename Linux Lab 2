@@ -1,0 +1,182 @@
+#!/bin/bash
+
+# to print output ( formatted)
+print_message() {
+  echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1"
+}
+
+# Handling ERROR
+handle_error() {
+  print_message "ERROR: $1"
+  exit 1
+}
+
+# Check installation of package
+is_package_installed() {
+  dpkg -s "$1" >/dev/null 2>&1
+}
+
+# if not install package
+install_package() {
+  if ! is_package_installed "$1"; then
+    print_message "Installing $1..."
+    if ! sudo apt-get -qq install "$1"; then
+      handle_error "Failed to install $1"
+    fi
+    print_message "Installed $1"
+  else
+    print_message "$1 is already installed"
+  fi
+}
+
+# static network configuration
+configure_network() {
+  print_message "Configuring network settings..."
+  
+  # Update /etc/network/interfaces file
+  echo "auto lo
+iface lo inet loopback
+
+auto eth0
+iface eth0 inet static
+address 192.168.16.21
+netmask 255.255.255.0
+gateway 192.168.16.1
+dns-nameservers 192.168.16.1
+dns-search home.arpa localdomain" | sudo tee /etc/network/interfaces >/dev/null
+
+  # Restartating
+  sudo systemctl restart networking
+  print_message "Network settings configured"
+}
+
+# SSH server configuration
+configure_ssh_server() {
+  print_message "Configuring SSH server..."
+
+  # Updating ssh server
+  sudo sed -i 's/#PasswordAuthentication yes/PasswordAuthentication no/' /etc/ssh/sshd_config
+  sudo sed -i 's/#PubkeyAuthentication yes/PubkeyAuthentication yes/' /etc/ssh/sshd_config
+
+  # Restartating ssh 
+  sudo systemctl restart ssh
+  print_message "SSH server configured"
+}
+
+# configuring Apache2 web server
+configure_apache2() {
+  print_message "Configuring Apache2 web server..."
+
+  # if not installed, Installing Apache2 
+  install_package apache2
+
+  # Enable necessary modules
+  sudo a2enmod ssl
+
+  # Updating Apache2 configuration files
+  echo "Listen 80
+Listen 443" | sudo tee /etc/apache2/ports.conf >/dev/null
+
+  # Restart Apache2 service
+  sudo systemctl restart apache2
+  print_message "Apache2 web server configured"
+}
+
+# configuring Squid web proxy
+configure_squid_proxy() {
+  print_message "Configuring Squid web proxy..."
+
+  # if not installed, install Squid 
+  install_package squid
+
+  # Updating Squid configuration file
+  echo "http_port 3128" | sudo tee /etc/squid/squid.conf >/dev/null
+
+  # Restarting Squid service
+  sudo systemctl restart squid
+  print_message "Squid web proxy configured"
+}
+
+# configuring UFW firewall
+configure_ufw_firewall() {
+  print_message "Configuring UFW firewall..."
+
+  # if not, Install UFW 
+  install_package ufw
+
+  # Enabling UFW and configure rules
+  sudo ufw enable
+  sudo ufw allow 22/tcp
+  sudo ufw allow 80/tcp
+  sudo ufw allow 443/tcp
+  sudo ufw allow 3128/tcp
+
+  print_message "UFW firewall configured"
+}
+
+# creating user accounts
+create_user_accounts() {
+  print_message "Creating user accounts..."
+
+  # Creating users and home directories
+  sudo useradd -m -s /bin/bash dennis
+  sudo useradd -m -s /bin/bash aubrey
+  sudo useradd -m -s /bin/bash captain
+  sudo useradd -m -s /bin/bash snibbles
+  sudo useradd -m -s /bin/bash brownie
+  sudo useradd -m -s /bin/bash scooter
+  sudo useradd -m -s /bin/bash sandy
+  sudo useradd -m -s /bin/bash perrier
+  sudo useradd -m -s /bin/bash cindy
+  sudo useradd -m -s /bin/bash tiger
+  sudo useradd -m -s /bin/bash yoda
+
+  # sudo access for dennis
+  sudo usermod -aG sudo dennis
+
+  # Generate and add SSH keys for users
+  generate_ssh_keys "dennis" "aubrey" "captain" "snibbles" "brownie" "scooter" "sandy" "perrier" "cindy" "tiger" "yoda"
+
+  print_message "User accounts created"
+}
+
+# generating SSH keys for users
+generate_ssh_keys() {
+  local users=("$@")
+  for user in "${users[@]}"; do
+    sudo -u "$user" ssh-keygen -t rsa -f "/home/$user/.ssh/id_rsa" -q -N ""
+    sudo -u "$user" ssh-keygen -t ed25519 -f "/home/$user/.ssh/id_ed25519" -q -N ""
+    cat "/home/$user/.ssh/id_rsa.pub" | sudo -u "$user" tee -a "/home/$user/.ssh/authorized_keys" >/dev/null
+    cat "/home/$user/.ssh/id_ed25519.pub" | sudo -u "$user" tee -a "/home/$user/.ssh/authorized_keys" >/dev/null
+    sudo -u "$user" chmod 600 "/home/$user/.ssh/authorized_keys"
+    sudo -u "$user" chown "$user:$user" -R "/home/$user/.ssh"
+  done
+}
+
+# Main script
+
+# handling exception of root
+if [[ $EUID -ne 0 ]]; then
+  handle_error "This script must be run with root privileges"
+fi
+
+# Configuring network
+configure_network
+
+# Configuring SSH server
+configure_ssh_server
+
+# Configuring Apache2 web server
+configure_apache2
+
+# Configuring Squid web proxy
+configure_squid_proxy
+
+# Configuring UFW firewall
+configure_ufw_firewall
+
+# Creating user accounts and generate SSH keys
+create_user_accounts
+
+# Print completion message
+print_message "System configuration completed successfully"
