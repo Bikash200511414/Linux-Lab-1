@@ -1,0 +1,46 @@
+#!/bin/bash
+
+# Function to execute commands remotely via SSH
+execute_remote() {
+    sshpass -p "$password" ssh -o StrictHostKeyChecking=no "$1"@"$2" "$3"
+}
+
+# Remote machine details
+target1_mgmt="172.16.1.10"
+target2_mgmt="172.16.1.11"
+username="remoteadmin"
+password="your_password_here"
+
+# Tasks for target1-mgmt
+execute_remote "$username" "$target1_mgmt" "sudo hostnamectl set-hostname loghost"
+execute_remote "$username" "$target1_mgmt" "sudo ip addr add 192.168.1.3/24 dev eth0"
+execute_remote "$username" "$target1_mgmt" "echo '192.168.1.4 webhost' | sudo tee -a /etc/hosts"
+execute_remote "$username" "$target1_mgmt" "sudo apt-get update && sudo apt-get install -y ufw"
+execute_remote "$username" "$target1_mgmt" "sudo ufw allow from 172.16.1.0/24 to any port 514/udp"
+execute_remote "$username" "$target1_mgmt" "sudo sed -i 's/#module(load=\"imudp\")/module(load=\"imudp\")/' /etc/rsyslog.conf"
+execute_remote "$username" "$target1_mgmt" "sudo sed -i 's/#input(type=\"imudp\" port=\"514\")/input(type=\"imudp\" port=\"514\")/' /etc/rsyslog.conf"
+execute_remote "$username" "$target1_mgmt" "sudo systemctl restart rsyslog"
+
+# Tasks for target2-mgmt
+execute_remote "$username" "$target2_mgmt" "sudo hostnamectl set-hostname webhost"
+execute_remote "$username" "$target2_mgmt" "sudo ip addr add 192.168.1.4/24 dev eth0"
+execute_remote "$username" "$target2_mgmt" "echo '192.168.1.3 loghost' | sudo tee -a /etc/hosts"
+execute_remote "$username" "$target2_mgmt" "sudo apt-get update && sudo apt-get install -y ufw apache2"
+execute_remote "$username" "$target2_mgmt" "sudo ufw allow 80/tcp"
+execute_remote "$username" "$target2_mgmt" "echo '. @loghost' | sudo tee -a /etc/rsyslog.conf"
+execute_remote "$username" "$target2_mgmt" "sudo systemctl restart rsyslog"
+
+# Update NMS /etc/hosts
+echo "$target1_mgmt loghost" | sudo tee -a /etc/hosts
+echo "$target2_mgmt webhost" | sudo tee -a /etc/hosts
+
+# Verification
+curl http://webhost
+ssh "$username"@"$target1_mgmt" "grep webhost /var/log/syslog"
+
+# Provide user feedback
+if [ $? -eq 0 ]; then
+    echo "Configuration update succeeded."
+else
+    echo "Configuration update failed."
+fi
